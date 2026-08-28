@@ -3,17 +3,27 @@
 
 #include "bmp280.h"
 #include "esp_err.h"
+#include "esp_log.h"
+#include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 #include "i2cdev.h"
-#include "sdkconfig.h"
-#include "soc/soc.h"
 
 #define I2C_MASTER_SDA 21
 #define I2C_MaSTER_SCL 22
 
-void bmp280_test(void *pvParameters) {
+static const char *TAG = "SolarNode main";
+
+typedef struct {
+    float temperature;
+    float pressure;
+    float humidity;
+} SolarNode_Data;
+
+static void sensorRead_bmp280(SolarNode_Data *restrict data) {
+    ESP_ERROR_CHECK(i2cdev_init());
+
     bmp280_params_t params;
     bmp280_init_default_params(&params);
 
@@ -24,31 +34,41 @@ void bmp280_test(void *pvParameters) {
                                      I2C_MASTER_SDA, I2C_MaSTER_SCL));
     ESP_ERROR_CHECK(bmp280_init(&dev, &params));
 
-    bool bme280p = dev.id == BME280_CHIP_ID;
-    printf("BME280: found %s\n", bme280p ? "BME280" : "BMP280");
+    ESP_LOGI(TAG, "BME280: found");
 
-    float temperature, pressure, humidity;
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        if (bmp280_read_float(&dev, &temperature, &pressure, &humidity) !=
-            ESP_OK) {
-            printf("Temperature/pressure reading failed\n");
-            continue;
-        }
-
-        printf("Pressure: %.2f Pa, Temperature: %.2f C", pressure, temperature);
-        if (bme280p) {
-            printf(", Humidity: %.2f\n", humidity);
-        } else {
-            printf("\n");
-        }
+    vTaskDelay(pdMS_TO_TICKS(90));
+    if (bmp280_read_float(&dev, &data->temperature, &data->pressure,
+                          &data->humidity) != ESP_OK) {
+        ESP_LOGW(TAG, "Temperature/pressure reading failed\n");
+        return;
     }
+
+    printf("Pressure: %.2f Pa, Temperature: %.2f C, Humidity: %.2f\n",
+           data->pressure, data->temperature, data->humidity);
+
+    ESP_ERROR_CHECK(bmp280_free_desc(&dev));
 }
 
 void app_main(void) {
-    ESP_ERROR_CHECK(i2cdev_init());
-    xTaskCreatePinnedToCore(bmp280_test, "bmp280_test",
-                            CONFIG_ESP_MAIN_TASK_STACK_SIZE, NULL, 5, NULL,
-                            APP_CPU_NUM);
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    SolarNode_Data data;
+
+    switch (wakeup_reason) {
+    case ESP_SLEEP_WAKEUP_TIMER:
+        ESP_LOGI(TAG, "Timer wakeup");
+        break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+        ESP_LOGI(TAG, "First boot or power-on reset wakeup");
+        break;
+    }
+
+    sensorRead_bmp280(&data);
+
+    esp_sleep_enable_timer_wakeup(WAKEUP_TIME_SEC * 1000000ULL);
+
+    ESP_LOGI(TAG, "Entering deep sleep for %d seconds", WAKEUP_TIME_SEC);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    esp_deep_sleep_start();
 }
