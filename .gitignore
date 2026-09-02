@@ -5,3 +5,5 @@ firmware/sdkconfig
 firmware/sdkconfig.old
 
 firmware/.cache
+
+server/server**
