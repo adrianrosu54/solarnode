@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type SolarNodeReading struct {
@@ -19,6 +20,10 @@ type SolarNodeReading struct {
 }
 
 var (
+	serverPort *int
+	maxAge     *time.Duration
+	lastUpdate time.Time
+
 	temperature = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "solarnode_temperature_celsius",
 		Help: "Sensor temperature measured (BME280)",
@@ -35,33 +40,11 @@ var (
 		Name: "solarnode_battery_voltage_volts",
 		Help: "Battery supply voltage (voltage divider ADC reading)",
 	})
-	storageMutex sync.RWMutex
+	dataAgeSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "solarnode_data_age_seconds",
+		Help: "Time passed since the last sensor data update in seconds",
+	})
 )
-
-func main() {
-	// cli flags
-	serverPort := flag.Int("server.port", 11267, "Port on which the SolarNode server runs")
-	flag.Parse()
-
-	// route setup
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/{$}", healthHandler)
-
-	mux.HandleFunc("/data", dataHandler)
-
-	mux.HandleFunc("/metrics", metricsHandler)
-
-	// server start
-	serverPortString := fmt.Sprintf(":%d", *serverPort)
-	log.Printf("Starting server on %s\n", serverPortString)
-
-	err := http.ListenAndServe(serverPortString, mux)
-	if err != nil {
-		log.Fatalf("Couldn't start server: %v\n", err)
-	}
-}
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -95,17 +78,55 @@ func dataHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("/data\tNew data recieved: %+v\n", newData)
 
 	// update data
-	storageMutex.Lock()
-
 	temperature.Set(newData.Temperature)
 	pressure.Set(newData.Pressure)
 	humidity.Set(newData.Humidity)
 	batteryVoltage.Set(newData.BatteryVoltage)
+	dataAgeSeconds.Set(0)
 
-	storageMutex.Unlock()
+	lastUpdate = time.Now()
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if time.Since(lastUpdate) > *maxAge {
+		http.Error(w, "Stale or unavailable sensor data", http.StatusServiceUnavailable)
+		return
+	}
+
+	dataAgeSeconds.Set(time.Since(lastUpdate).Seconds())
+
+	promhttp.Handler().ServeHTTP(w, r)
+}
+
+func main() {
+	// cli flags
+	serverPort = flag.Int("port", 11267,
+		"Port on which the SolarNode server runs")
+	maxAge = flag.Duration("max_age", 5*time.Minute,
+		"Maximum age of sensor data in minutes")
+	flag.Parse()
+
+	// prometheus setup
+	prometheus.MustRegister(temperature, pressure, humidity, batteryVoltage, dataAgeSeconds)
+
+	// route setup
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/{$}", healthHandler)
+
+	mux.HandleFunc("/data", dataHandler)
+
+	mux.HandleFunc("/metrics", metricsHandler)
+
+	// server start
+	serverPortString := fmt.Sprintf(":%d", *serverPort)
+	log.Printf("Starting server on %s\n", serverPortString)
+
+	err := http.ListenAndServe(serverPortString, mux)
+	if err != nil {
+		log.Fatalf("Couldn't start server: %v\n", err)
+	}
 }
