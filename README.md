@@ -33,3 +33,10 @@ Requires the standard Go build tools installed. Check out
 cd server
 go build
 ```
+
+## License
+
+Copyright (c) 2026 Adrian Laurențiu Roșu. All Rights Reserved.
+
+This repository is available for viewing purposes only. See [LICENSE](./LICENSE)
+for details.
