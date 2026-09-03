@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "bmp280.h"
@@ -229,7 +228,7 @@ static SolarNode_Error configureWifi() {
                                            pdFALSE, pdFALSE, portMAX_DELAY);
 
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "Connected successfully");
+        ESP_LOGI(TAG, "Connected to Wi-Fi successfully");
     } else {
         ESP_LOGE(TAG, "Failed to connect to the Wi-Fi network");
         return SOLARNODE_NETWORK_FAILURE;
@@ -254,7 +253,9 @@ static void httpPostRequest(const char *jsonPayload) {
     esp_http_client_config_t config = {.url = SOLARNODE_SERVER_DATA_URL,
                                        .event_handler = httpEventHandler,
                                        .method = HTTP_METHOD_POST,
-                                       .timeout_ms = 5000};
+                                       .timeout_ms = 5000,
+                                       .transport_type =
+                                           HTTP_TRANSPORT_OVER_TCP};
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
@@ -268,7 +269,9 @@ static void httpPostRequest(const char *jsonPayload) {
                  esp_http_client_get_status_code(client),
                  esp_http_client_get_content_length(client));
     } else {
-        ESP_LOGE(TAG, "POST request failed: %s", esp_err_to_name(error));
+        ESP_LOGE(TAG,
+                 "POST request to " SOLARNODE_SERVER_DATA_URL " failed: %s",
+                 esp_err_to_name(error));
     }
 
     esp_http_client_cleanup(client);
