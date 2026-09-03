@@ -12,13 +12,28 @@ Requires the official
 [ESP-IDF SDK](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started)
 from Espressif.
 
+First, write and load the required environment variables.
+
 ```bash
-cd firmware
+SOLARNODE_WIFI_SSID="..."
+SOLARNODE_WIFI_PASS="..."
+SOLARNODE_SERVER_DATA_URL="..."
+```
 
-# make sure to activate the ESP-IDF environment variables and tools
-# by running the repository's export.sh script
+You may set them in the command line or use an env file and load it with:
 
-# connect the ESP32 via USB to your computer and run (on Linux):
+```bash
+set -a
+source .env
+set +a
+```
+
+Secondly, make sure to activate the ESP-IDF environment variables and tools
+by running the repository's export.sh script.
+
+Connect the ESP32 via USB to your computer and run:
+
+```bash
 idf.py set-target esp32
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor

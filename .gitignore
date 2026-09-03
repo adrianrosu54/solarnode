@@ -6,4 +6,6 @@ firmware/sdkconfig.old
 
 firmware/.cache
 
+firmware/.env**
+
 server/server**
