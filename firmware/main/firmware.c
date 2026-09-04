@@ -25,18 +25,17 @@
 #include "freertos/projdefs.h"
 #include "hal/adc_types.h"
 #include "i2cdev.h"
-#include "lwip/ip4_addr.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "portmacro.h"
+#include "sdkconfig.h"
 
+#define I2C_PORT 0
 #define I2C_MASTER_SDA 21
 #define I2C_MaSTER_SCL 22
 
 #define ADC_UNIT ADC_UNIT_1
 #define ADC_CHANNEL ADC_CHANNEL_0
-
-#define WAKEUP_TIME_SEC 10
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
@@ -69,7 +68,7 @@ RTC_DATA_ATTR static bool s_wifiHasCache = false;
 
 static SolarNode_Error readBmp280(SolarNode_Data *data) {
     if (i2cdev_init() != ESP_OK) {
-        ESP_LOGW(TAG, "Couldn't start I2C comms");
+        ESP_LOGE(TAG, "Couldn't start I2C comms");
         return SOLARNODE_STARTUP_FAILURE;
     }
 
@@ -79,7 +78,7 @@ static SolarNode_Error readBmp280(SolarNode_Data *data) {
     bmp280_t dev;
     memset(&dev, 0, sizeof(bmp280_t));
 
-    if (bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0, 0, I2C_MASTER_SDA,
+    if (bmp280_init_desc(&dev, BMP280_I2C_ADDRESS_0, I2C_PORT, I2C_MASTER_SDA,
                          I2C_MaSTER_SCL) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
     if (bmp280_init(&dev, &params) != ESP_OK)
@@ -90,11 +89,11 @@ static SolarNode_Error readBmp280(SolarNode_Data *data) {
 
     if (bmp280_read_float(&dev, &data->temperature, &data->pressure,
                           &data->humidity) != ESP_OK) {
-        ESP_LOGW(TAG, "Temp and pressure reading failed");
+        ESP_LOGE(TAG, "Temp and pressure reading failed");
         return SOLARNODE_READ_FAILURE;
     }
 
-    ESP_LOGI(TAG, "Pressure: %.2f, Temp: %.2f, Humidity: %.2f", data->pressure,
+    ESP_LOGD(TAG, "Pressure: %.2f, Temp: %.2f, Humidity: %.2f", data->pressure,
              data->temperature, data->humidity);
 
     bmp280_free_desc(&dev);
@@ -128,7 +127,7 @@ static SolarNode_Error readBattery(SolarNode_Data *data) {
     int voltageMv = 0;
 
     if (adc_oneshot_read(adcHandle, ADC_CHANNEL, &adcValue) != ESP_OK) {
-        ESP_LOGW(TAG, "ADC battery voltage reading failed\n");
+        ESP_LOGE(TAG, "ADC battery voltage reading failed");
         return SOLARNODE_READ_FAILURE;
     }
 
@@ -137,7 +136,7 @@ static SolarNode_Error readBattery(SolarNode_Data *data) {
     // double to calculate read voltage using the voltage divider
     voltageMv *= 2;
 
-    ESP_LOGI(TAG, "ADC raw value: %d, Voltage value: %d mV", adcValue,
+    ESP_LOGD(TAG, "ADC raw value: %d, Voltage value: %d mV", adcValue,
              voltageMv);
 
     data->batteryVoltage = (float)voltageMv / 1000.0f;
@@ -201,8 +200,7 @@ static SolarNode_Error configureWifi() {
     if (esp_event_loop_create_default() != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
-    // esp_netif_t *sta_netif =
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *staNetif = esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t initConfig = WIFI_INIT_CONFIG_DEFAULT();
     if (esp_wifi_init(&initConfig) != ESP_OK)
@@ -224,8 +222,8 @@ static SolarNode_Error configureWifi() {
     // Wi-Fi credentials and mode configuration
 
     wifi_config_t wifiConfig = {
-        .sta = {.ssid = SOLARNODE_WIFI_SSID,
-                .password = SOLARNODE_WIFI_PASS,
+        .sta = {.ssid = CONFIG_SOLARNODE_WIFI_SSID,
+                .password = CONFIG_SOLARNODE_WIFI_PASS,
                 .scan_method = WIFI_FAST_SCAN,
                 .threshold.authmode = WIFI_AUTH_WPA2_PSK}};
 
@@ -244,12 +242,22 @@ static SolarNode_Error configureWifi() {
     // disable power saving (short lived connection)
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+    // DHCP
+
+    esp_netif_dhcpc_stop(staNetif);
+
+    esp_netif_ip_info_t ipInfo = {
+        .ip.addr = esp_ip4addr_aton(CONFIG_SOLARNODE_IP_ADDR),
+        .gw.addr = esp_ip4addr_aton(CONFIG_SOLARNODE_GATEWAY),
+        .netmask.addr = esp_ip4addr_aton(CONFIG_SOLARNODE_NETMASK)};
+    esp_netif_set_ip_info(staNetif, &ipInfo);
+
     // start Wi-Fi
 
     if (esp_wifi_start() != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
-    ESP_LOGI(TAG, "Connecting to %s...", SOLARNODE_WIFI_SSID);
+    ESP_LOGI(TAG, "Connecting to %s...", CONFIG_SOLARNODE_WIFI_SSID);
 
     EventBits_t bits = xEventGroupWaitBits(s_wifiEventGroup,
                                            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
@@ -278,7 +286,7 @@ static esp_err_t httpEventHandler(esp_http_client_event_t *event) {
 }
 
 static void httpPostRequest(const char *jsonPayload) {
-    esp_http_client_config_t config = {.url = SOLARNODE_SERVER_DATA_URL,
+    esp_http_client_config_t config = {.url = CONFIG_SOLARNODE_SERVER_URL,
                                        .event_handler = httpEventHandler,
                                        .method = HTTP_METHOD_POST,
                                        .timeout_ms = 5000,
@@ -293,12 +301,12 @@ static void httpPostRequest(const char *jsonPayload) {
     esp_err_t error = esp_http_client_perform(client);
 
     if (error == ESP_OK) {
-        ESP_LOGI(TAG, "POST status: %d, Content Length: %" PRId64,
+        ESP_LOGI(TAG, "POST request status: %d, Content Length: %" PRId64,
                  esp_http_client_get_status_code(client),
                  esp_http_client_get_content_length(client));
     } else {
         ESP_LOGE(TAG,
-                 "POST request to " SOLARNODE_SERVER_DATA_URL " failed: %s",
+                 "POST request to " CONFIG_SOLARNODE_SERVER_URL " failed: %s",
                  esp_err_to_name(error));
     }
 
@@ -331,7 +339,7 @@ static SolarNode_Error networkSendReading(SolarNode_Data *data) {
 
     char *json = cJSON_PrintUnformatted(root);
 
-    ESP_LOGI(TAG, "JSON payload: %.*s", strlen(json), json);
+    ESP_LOGD(TAG, "JSON payload: %.*s", strlen(json), json);
 
     httpPostRequest(json);
 
@@ -373,9 +381,11 @@ void app_main(void) {
         ESP_LOGW(TAG, "Sensors failed, data won't be transmitted.");
     }
 
-    esp_sleep_enable_timer_wakeup(WAKEUP_TIME_SEC * 1000000ULL);
+    esp_sleep_enable_timer_wakeup(CONFIG_SOLARNODE_WAKEUP_TIME_SEC *
+                                  1000000ULL);
 
-    ESP_LOGI(TAG, "Entering deep sleep for %d seconds", WAKEUP_TIME_SEC);
+    ESP_LOGI(TAG, "Entering deep sleep for %d seconds",
+             CONFIG_SOLARNODE_WAKEUP_TIME_SEC);
     vTaskDelay(pdMS_TO_TICKS(100));
 
     esp_deep_sleep_start();

@@ -1,0 +1,46 @@
+menu "SolarNode configuration settings"
+
+    config SOLARNODE_WAKEUP_TIME_SEC
+        int "WAKEUP TIME SEC"
+        default 55
+        range 1 86400
+        help
+            The time interval between the station's wakeup cycles
+
+    config SOLARNODE_WIFI_SSID
+        string "WIFI SSID"
+        default "default-network"
+        help
+            Wi-Fi network name the station will connect to
+        
+    config SOLARNODE_WIFI_PASS
+        string "WIFI PASS"
+        default "change this"
+        help
+            Wi-Fi password of the network
+
+    config SOLARNODE_SERVER_URL
+        string "SERVER URL"
+        default "http://192.168.1.10:11267/data"
+        help
+            The URL used by the station to send HTTP POST requsts to the server
+
+    config SOLARNODE_IP_ADDR
+        string "IP ADDR"
+        default "192.168.1.100"
+        help
+            The static IP address configured for the station's MAC address
+
+    config SOLARNODE_GATEWAY
+        string "GATEWAY"
+        default "192.168.1.1"
+        help
+            The network's gateway IP address (usually the router's address)
+
+    config SOLARNODE_NETMASK
+        string "NETMASK"
+        default "255.255.255.0"
+        help
+            The network's subnet mask with dotted decimal notation
+
+endmenu
