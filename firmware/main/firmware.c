@@ -6,6 +6,7 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_attr.h"
 #include "esp_bit_defs.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -24,6 +25,7 @@
 #include "freertos/projdefs.h"
 #include "hal/adc_types.h"
 #include "i2cdev.h"
+#include "lwip/ip4_addr.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "portmacro.h"
@@ -45,7 +47,7 @@ typedef struct {
     float temperature;
     float pressure;
     float humidity;
-    float battery_voltage;
+    float batteryVoltage;
 } SolarNode_Data;
 
 typedef enum {
@@ -59,6 +61,11 @@ static const char *TAG = "SolarNode main";
 
 static EventGroupHandle_t s_wifiEventGroup;
 static int s_retryCount = 0;
+static esp_event_handler_instance_t s_instanceAnyId;
+
+RTC_DATA_ATTR static uint8_t s_wifiCachedBssid[6];
+RTC_DATA_ATTR static uint8_t s_wifiCachedChannel;
+RTC_DATA_ATTR static bool s_wifiHasCache = false;
 
 static SolarNode_Error readBmp280(SolarNode_Data *data) {
     if (i2cdev_init() != ESP_OK) {
@@ -96,37 +103,36 @@ static SolarNode_Error readBmp280(SolarNode_Data *data) {
 }
 
 static SolarNode_Error readBattery(SolarNode_Data *data) {
-    adc_oneshot_unit_handle_t adc_handle;
-    adc_oneshot_unit_init_cfg_t init_config = {.unit_id = ADC_UNIT};
+    adc_oneshot_unit_handle_t adcHandle;
+    adc_oneshot_unit_init_cfg_t initConfig = {.unit_id = ADC_UNIT};
 
-    if (adc_oneshot_new_unit(&init_config, &adc_handle) != ESP_OK)
+    if (adc_oneshot_new_unit(&initConfig, &adcHandle) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
     adc_oneshot_chan_cfg_t config = {.bitwidth = ADC_BITWIDTH_DEFAULT,
                                      .atten = ADC_ATTEN_DB_12};
 
-    if (adc_oneshot_config_channel(adc_handle, ADC_CHANNEL, &config) != ESP_OK)
+    if (adc_oneshot_config_channel(adcHandle, ADC_CHANNEL, &config) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
-    adc_cali_handle_t cali_handle = NULL;
-    adc_cali_line_fitting_config_t cali_config = {.unit_id = ADC_UNIT,
-                                                  .bitwidth =
-                                                      ADC_BITWIDTH_DEFAULT,
-                                                  .atten = ADC_ATTEN_DB_12};
+    adc_cali_handle_t caliHandle = NULL;
+    adc_cali_line_fitting_config_t caliConfig = {.unit_id = ADC_UNIT,
+                                                 .bitwidth =
+                                                     ADC_BITWIDTH_DEFAULT,
+                                                 .atten = ADC_ATTEN_DB_12};
 
-    if (adc_cali_create_scheme_line_fitting(&cali_config, &cali_handle) !=
-        ESP_OK)
+    if (adc_cali_create_scheme_line_fitting(&caliConfig, &caliHandle) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
     int adcValue = 0;
     int voltageMv = 0;
 
-    if (adc_oneshot_read(adc_handle, ADC_CHANNEL, &adcValue) != ESP_OK) {
+    if (adc_oneshot_read(adcHandle, ADC_CHANNEL, &adcValue) != ESP_OK) {
         ESP_LOGW(TAG, "ADC battery voltage reading failed\n");
         return SOLARNODE_READ_FAILURE;
     }
 
-    adc_cali_raw_to_voltage(cali_handle, adcValue, &voltageMv);
+    adc_cali_raw_to_voltage(caliHandle, adcValue, &voltageMv);
 
     // double to calculate read voltage using the voltage divider
     voltageMv *= 2;
@@ -134,31 +140,40 @@ static SolarNode_Error readBattery(SolarNode_Data *data) {
     ESP_LOGI(TAG, "ADC raw value: %d, Voltage value: %d mV", adcValue,
              voltageMv);
 
-    data->battery_voltage = (float)voltageMv / 1000;
+    data->batteryVoltage = (float)voltageMv / 1000.0f;
 
     return SOLARNODE_SUCCCES;
 }
 
-static void wifiEventHandler(void *arg, esp_event_base_t event_base,
-                             int32_t event_id, void *event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+static void wifiEventHandler(void *arg, esp_event_base_t eventBase,
+                             int32_t eventId, void *eventData) {
+    if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_START) {
         // connection loop start
         esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT &&
-               event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    } else if (eventBase == WIFI_EVENT &&
+               eventId == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retryCount < MAX_WIFI_RETRIES) {
             esp_wifi_connect();
             s_retryCount++;
-            ESP_LOGI(TAG, "Disconnected. Retrying... (%d/%d)", s_retryCount,
-                     MAX_WIFI_RETRIES);
+            wifi_event_sta_disconnected_t *event =
+                (wifi_event_sta_disconnected_t *)eventData;
+            ESP_LOGI(TAG, "Disconnected, reason=%d. Retrying... (%d/%d)",
+                     event->reason, s_retryCount, MAX_WIFI_RETRIES);
         } else {
             xEventGroupSetBits(s_wifiEventGroup, WIFI_FAIL_BIT);
         }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    } else if (eventBase == IP_EVENT && eventId == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)eventData;
         ESP_LOGI(TAG, "Received IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retryCount = 0;
         xEventGroupSetBits(s_wifiEventGroup, WIFI_CONNECTED_BIT);
+
+        // renew cache
+        wifi_ap_record_t apInfo;
+        esp_wifi_sta_get_ap_info(&apInfo);
+        memcpy(s_wifiCachedBssid, apInfo.bssid, 6);
+        s_wifiCachedChannel = apInfo.primary;
+        s_wifiHasCache = true;
     }
 }
 
@@ -189,34 +204,47 @@ static SolarNode_Error configureWifi() {
     // esp_netif_t *sta_netif =
     esp_netif_create_default_wifi_sta();
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    if (esp_wifi_init(&cfg) != ESP_OK)
+    wifi_init_config_t initConfig = WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&initConfig) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
     // event handler setup
 
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
+    // (instanceAnyId made global)
+    esp_event_handler_instance_t instanceGotIp;
     if (esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                             &wifiEventHandler, NULL,
-                                            &instance_any_id) != ESP_OK)
+                                            &s_instanceAnyId) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
     if (esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                             &wifiEventHandler, NULL,
-                                            &instance_got_ip) != ESP_OK)
+                                            &instanceGotIp) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
 
     // Wi-Fi credentials and mode configuration
 
-    wifi_config_t wifi_config = {
+    wifi_config_t wifiConfig = {
         .sta = {.ssid = SOLARNODE_WIFI_SSID,
                 .password = SOLARNODE_WIFI_PASS,
+                .scan_method = WIFI_FAST_SCAN,
                 .threshold.authmode = WIFI_AUTH_WPA2_PSK}};
+
+    if (s_wifiHasCache) {
+        memcpy(wifiConfig.sta.bssid, s_wifiCachedBssid, 6);
+        wifiConfig.sta.bssid_set = true;
+        wifiConfig.sta.channel = s_wifiCachedChannel;
+        ESP_LOGI(TAG, "Wi-Fi info cache hit");
+    }
 
     if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
-    if (esp_wifi_set_config(WIFI_IF_STA, &wifi_config) != ESP_OK)
+    if (esp_wifi_set_config(WIFI_IF_STA, &wifiConfig) != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
+
+    // disable power saving (short lived connection)
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
+    // start Wi-Fi
 
     if (esp_wifi_start() != ESP_OK)
         return SOLARNODE_STARTUP_FAILURE;
@@ -283,7 +311,7 @@ static SolarNode_Error networkSendReading(SolarNode_Data *data) {
              "Temperature: %.2f C, Pressure: %.2f Pa, Humidity: %.2f %%RH, "
              "Battery: %.2f mV",
              data->temperature, data->pressure, data->humidity,
-             data->battery_voltage);
+             data->batteryVoltage);
 
     // establish Wi-Fi connection
 
@@ -299,25 +327,34 @@ static SolarNode_Error networkSendReading(SolarNode_Data *data) {
     cJSON_AddNumberToObject(root, "temperature", data->temperature);
     cJSON_AddNumberToObject(root, "pressure", data->pressure);
     cJSON_AddNumberToObject(root, "humidity", data->humidity);
-    cJSON_AddNumberToObject(root, "battery_voltage", data->battery_voltage);
+    cJSON_AddNumberToObject(root, "battery_voltage", data->batteryVoltage);
 
     char *json = cJSON_PrintUnformatted(root);
 
-    ESP_LOGD(TAG, "JSON payload: %.*s", strlen(json), json);
+    ESP_LOGI(TAG, "JSON payload: %.*s", strlen(json), json);
 
     httpPostRequest(json);
 
     free(json);
     cJSON_Delete(root);
 
+    // cleanup Wi-Fi
+
+    esp_event_handler_instance_unregister(
+        WIFI_EVENT, ESP_EVENT_ANY_ID,
+        s_instanceAnyId); // remove unwanted disconnect retries
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     return SOLARNODE_SUCCCES;
 }
 
 void app_main(void) {
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
     SolarNode_Data data;
 
-    switch (wakeup_reason) {
+    switch (wakeupReason) {
     case ESP_SLEEP_WAKEUP_TIMER:
         ESP_LOGI(TAG, "Timer wakeup");
         break;
