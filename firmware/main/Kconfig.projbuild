@@ -2,7 +2,7 @@ menu "SolarNode configuration settings"
 
     config SOLARNODE_WAKEUP_TIME_SEC
         int "WAKEUP TIME SEC"
-        default 55
+        default 58
         range 1 86400
         help
             The time interval between the station's wakeup cycles

@@ -17,6 +17,7 @@ type SolarNodeReading struct {
 	Pressure       float64 `json:"pressure"`
 	Humidity       float64 `json:"humidity"`
 	BatteryVoltage float64 `json:"battery_voltage"`
+	WifiRssi       int8    `json:"wifi_rssi"`
 }
 
 var (
@@ -40,6 +41,10 @@ var (
 		Name: "solarnode_battery_voltage_volts",
 		Help: "Battery supply voltage (voltage divider ADC reading)",
 	})
+	wifiRssi = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "solarnode_wifi_rssi_db",
+		Help: "Wi-Fi recieved signal strength indicator measured in decibels",
+	})
 	dataAgeSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "solarnode_data_age_seconds",
 		Help: "Time passed since the last sensor data update in seconds",
@@ -49,6 +54,8 @@ var (
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+
+	log.Println("Health check")
 
 	err := json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 	if err != nil {
@@ -82,6 +89,7 @@ func dataHandler(w http.ResponseWriter, r *http.Request) {
 	pressure.Set(newData.Pressure)
 	humidity.Set(newData.Humidity)
 	batteryVoltage.Set(newData.BatteryVoltage)
+	wifiRssi.Set(float64(newData.WifiRssi))
 	dataAgeSeconds.Set(0)
 
 	lastUpdate = time.Now()
@@ -109,7 +117,7 @@ func main() {
 	flag.Parse()
 
 	// prometheus setup
-	prometheus.MustRegister(temperature, pressure, humidity, batteryVoltage, dataAgeSeconds)
+	prometheus.MustRegister(temperature, pressure, humidity, batteryVoltage, wifiRssi, dataAgeSeconds)
 
 	// route setup
 	mux := http.NewServeMux()

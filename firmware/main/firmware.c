@@ -47,6 +47,7 @@ typedef struct {
     float pressure;
     float humidity;
     float batteryVoltage;
+    int wifiRssi;
 } SolarNode_Data;
 
 typedef enum {
@@ -273,6 +274,14 @@ static SolarNode_Error configureWifi() {
     return SOLARNODE_SUCCCES;
 }
 
+static void captureWifiRssi(SolarNode_Data *data) {
+    wifi_ap_record_t apInfo;
+    if (esp_wifi_sta_get_ap_info(&apInfo) != ESP_OK)
+        return;
+
+    data->wifiRssi = apInfo.rssi;
+}
+
 static esp_err_t httpEventHandler(esp_http_client_event_t *event) {
     switch (event->event_id) {
     case HTTP_EVENT_ON_DATA:
@@ -329,6 +338,8 @@ static SolarNode_Error networkSendReading(SolarNode_Data *data) {
         return SOLARNODE_NETWORK_FAILURE;
     }
 
+    captureWifiRssi(data);
+
     // create and send JSON post request
 
     cJSON *root = cJSON_CreateObject();
@@ -336,6 +347,7 @@ static SolarNode_Error networkSendReading(SolarNode_Data *data) {
     cJSON_AddNumberToObject(root, "pressure", data->pressure);
     cJSON_AddNumberToObject(root, "humidity", data->humidity);
     cJSON_AddNumberToObject(root, "battery_voltage", data->batteryVoltage);
+    cJSON_AddNumberToObject(root, "wifi_rssi", data->wifiRssi);
 
     char *json = cJSON_PrintUnformatted(root);
 
