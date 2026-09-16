@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -55,12 +56,10 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	log.Println("Health check")
-
 	err := json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("Encoder error: %v\n", err)
+		slog.Error("Encoder error", slog.String("Error", err.Error()))
 		return
 	}
 }
@@ -79,10 +78,12 @@ func dataHandler(w http.ResponseWriter, r *http.Request) {
 	err := decoder.Decode(&newData)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.Warn("Invalid POST request on /data recieved", slog.String("Error", err.Error()))
 		return
 	}
 
-	log.Printf("/data\tNew data recieved: %+v\n", newData)
+	slog.Info("New reading recieved", slog.String("Address", r.RemoteAddr))
+	slog.Debug("Data reading", "SolarNode reading", fmt.Sprintf("%+v", newData))
 
 	// update data
 	temperature.Set(newData.Temperature)
@@ -98,12 +99,14 @@ func dataHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	if time.Since(lastUpdate) > *maxAge {
+	dataAge := time.Since(lastUpdate)
+	if dataAge > *maxAge {
 		http.Error(w, "Stale or unavailable sensor data", http.StatusServiceUnavailable)
+		slog.Warn("Stale or unavailable sensor data", "Data age", dataAge)
 		return
 	}
 
-	dataAgeSeconds.Set(time.Since(lastUpdate).Seconds())
+	dataAgeSeconds.Set(dataAge.Seconds())
 
 	promhttp.Handler().ServeHTTP(w, r)
 }
@@ -114,7 +117,23 @@ func main() {
 		"Port on which the SolarNode server runs")
 	maxAge = flag.Duration("max_age", 5*time.Minute,
 		"Maximum age of sensor data in minutes")
+	logLevelOption := flag.String("log_level", "info", "Configured server log level. Available options: info, debug")
 	flag.Parse()
+
+	// log setup
+	logLevel := func() slog.Level {
+		switch *logLevelOption {
+		case "debug":
+			return slog.LevelDebug
+		case "info":
+			return slog.LevelInfo
+		default:
+			log.Fatalln("Invalid log_level option")
+			return 0
+		}
+	}()
+
+	slog.SetLogLoggerLevel(logLevel)
 
 	// prometheus setup
 	prometheus.MustRegister(temperature, pressure, humidity, batteryVoltage, wifiRssi, dataAgeSeconds)
@@ -130,9 +149,9 @@ func main() {
 	mux.HandleFunc("/metrics", metricsHandler)
 
 	// server start
-	serverPortString := fmt.Sprintf(":%d", *serverPort)
-	log.Printf("Starting server on %s\n", serverPortString)
+	slog.Info("Starting SolarNode server", slog.Int("Port", *serverPort))
 
+	serverPortString := fmt.Sprintf(":%d", *serverPort)
 	err := http.ListenAndServe(serverPortString, mux)
 	if err != nil {
 		log.Fatalf("Couldn't start server: %v\n", err)
