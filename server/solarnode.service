@@ -1,0 +1,16 @@
+[Unit]
+Description=SolarNode weather station server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/solarnode-server
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=solarnode
+
+[Install]
+WantedBy=multi-user.target

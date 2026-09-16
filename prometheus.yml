@@ -1,0 +1,7 @@
+# prometheus configuration example
+scrape_configs:
+  - job_name: "solarnode"
+    scrape_interval: 1m
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:11267"]

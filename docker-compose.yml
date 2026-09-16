@@ -1,0 +1,15 @@
+# docker compose file template example
+services:
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # enable communication outside docker network
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
