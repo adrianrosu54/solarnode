@@ -50,10 +50,16 @@ The project's [systemd service](./server/solarnode.service) file provides a
 default configuration to run the server. You may send the server binary to the device
 (via `scp` for example) and enable the service.
 
+### Metrics
+
 In order to collect and visualise metrics, configure Grafana and Prometheus.
 I most definitely recommend using Docker.
+
 Minimal examples for the [prometheus.yml](./prometheus.yml) and
 [docker-compose.yml](./docker-compose.yml) are provided.
+
+Once set up, import the project's custom [Grafana dashboard](./grafana-dashboard.json)
+to display relevant station data.
 
 ## License
 
