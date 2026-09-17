@@ -1,19 +1,25 @@
 # SolarNode
 
-SolarNode is a solar-powered weather station project. It runs using an ESP32
-board and it integrates with an external server providing a **Prometheus**
-metrics endpoint. In addition, the data may be visualised using **Grafana**.
+SolarNode is a **solar-powered weather station** project. It runs using an _ESP32_
+board and integrates with an external hosted server providing a _Prometheus_
+metrics endpoint. The resulting data can be visualised using a
+custom-made _Grafana dashboard_.
 
-It is designed to be _energy efficient_ and _resilient_ using a fully _3D printed_
-frame and enclosure.
+The project is designed to be **energy efficient** and **resilient**, using a fully
+_3D printed_ solar panel frame and enclosure assembly.
+The core station spends most of its time inside **deep sleep**,
+waking up and sending data at regular intervals (every minute, by default).
 
-## Building from source
+## Building
+
+The project software has been written on Linux, but all frameworks and libraries
+used are cross-platform capable.
 
 ### ESP32 Station Firmware
 
 Requires the official
 [ESP-IDF SDK](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started)
-from Espressif.
+from _Espressif_.
 
 Make sure to activate the ESP-IDF environment variables and tools
 by running the repository's export.sh script.
@@ -24,7 +30,7 @@ Connect the ESP32 via USB to your computer and run:
 cd firmware
 idf.py set-target esp32
 
-# set all variables from `SolarNode configuration settings`
+# set all variables from <SolarNode configuration settings>
 idf.py menuconfig
 
 idf.py build
@@ -48,7 +54,7 @@ requires a host device on the LAN, such as a Raspberry Pi or a Mini PC.
 
 The project's [systemd service](./server/solarnode.service) file provides a
 default configuration to run the server. You may send the server binary to the device
-(via `scp` for example) and enable the service.
+(via `scp`, for example) and enable the service.
 
 ### Metrics
 
