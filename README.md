@@ -1,5 +1,7 @@
 # SolarNode
 
+![Solarnode deployed prototype picture](./solarnode-prototype.jpg)
+
 SolarNode is a **solar-powered weather station** project. It runs using an _ESP32_
 board and integrates with an external hosted server providing a _Prometheus_
 metrics endpoint. The resulting data can be visualised using a
@@ -9,6 +11,12 @@ The project is designed to be **energy efficient** and **resilient**, using a fu
 _3D printed_ solar panel frame and enclosure assembly.
 The core station spends most of its time inside **deep sleep**,
 waking up and sending data at regular intervals (every minute, by default).
+
+I've captured the process of designing and deploying the first prototype of the
+SolarNode project, as well as the challenges encountered in this **YouTube
+video**:
+<https://youtu.be/DYYLmYblaQc>.
+This iteration of the station was launched on the 17th of September 2026.
 
 ## Building
 
